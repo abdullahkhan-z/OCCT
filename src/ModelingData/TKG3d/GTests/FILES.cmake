@@ -2,6 +2,7 @@
 set(OCCT_TKG3d_GTests_FILES_LOCATION "${CMAKE_CURRENT_LIST_DIR}")
 
 set(OCCT_TKG3d_GTests_FILES
+  Adaptor3d_IsoCurve_Test.cxx
   Geom_BezierCurve_Test.cxx
   Geom_BezierSurface_Test.cxx
   Geom_BSplineCurve_Test.cxx
