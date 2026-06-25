@@ -4228,6 +4228,13 @@ void ShapeUpgrade_UnifySameDomain::IntUnifyFaces(
       }
 
       // Insert new faces instead of old ones
+      if (NewFaces.IsEmpty() && NewWires.IsEmpty() && InternalWires.IsEmpty())
+      {
+        // The selected closed periodic group has no remaining boundary representation.
+        // A replacement face without wires is under-defined for downstream algorithms.
+        continue;
+      }
+
       if (NewFaces.IsEmpty())
       {
         // one face without seam

@@ -35,6 +35,16 @@
 #include <Standard_NoSuchObject.hxx>
 #include <Standard_NotImplemented.hxx>
 
+#include <cmath>
+
+namespace
+{
+bool isFullPeriodSpan(const double theFirst, const double theLast, const double thePeriod)
+{
+  return theLast > theFirst && std::abs(theLast - theFirst - thePeriod) < Precision::PConfusion();
+}
+} // namespace
+
 IMPLEMENT_STANDARD_RTTIEXT(Adaptor3d_IsoCurve, Adaptor3d_Curve)
 
 //=================================================================================================
@@ -164,43 +174,57 @@ void Adaptor3d_IsoCurve::Load(const GeomAbs_IsoType Iso,
 
   if (mySurface->IsUPeriodic())
   {
+    const double aPeriod = mySurface->UPeriod();
 
     if (myIso == GeomAbs_IsoU)
     {
       ElCLib::AdjustPeriodic(mySurface->FirstUParameter(),
-                             mySurface->FirstUParameter() + mySurface->UPeriod(),
+                             mySurface->FirstUParameter() + aPeriod,
                              mySurface->UResolution(Precision::Confusion()),
                              myParameter,
                              dummy);
     }
     else
     {
+      const double aFirst = myFirst;
+      const double aLast  = myLast;
       ElCLib::AdjustPeriodic(mySurface->FirstUParameter(),
-                             mySurface->FirstUParameter() + mySurface->UPeriod(),
+                             mySurface->FirstUParameter() + aPeriod,
                              mySurface->UResolution(Precision::Confusion()),
                              myFirst,
                              myLast);
+      if (isFullPeriodSpan(aFirst, aLast, aPeriod))
+      {
+        myLast = myFirst + aPeriod;
+      }
     }
   }
 
   if (mySurface->IsVPeriodic())
   {
+    const double aPeriod = mySurface->VPeriod();
 
     if (myIso == GeomAbs_IsoV)
     {
       ElCLib::AdjustPeriodic(mySurface->FirstVParameter(),
-                             mySurface->FirstVParameter() + mySurface->VPeriod(),
+                             mySurface->FirstVParameter() + aPeriod,
                              mySurface->VResolution(Precision::Confusion()),
                              myParameter,
                              dummy);
     }
     else
     {
+      const double aFirst = myFirst;
+      const double aLast  = myLast;
       ElCLib::AdjustPeriodic(mySurface->FirstVParameter(),
-                             mySurface->FirstVParameter() + mySurface->VPeriod(),
+                             mySurface->FirstVParameter() + aPeriod,
                              mySurface->VResolution(Precision::Confusion()),
                              myFirst,
                              myLast);
+      if (isFullPeriodSpan(aFirst, aLast, aPeriod))
+      {
+        myLast = myFirst + aPeriod;
+      }
     }
   }
 }

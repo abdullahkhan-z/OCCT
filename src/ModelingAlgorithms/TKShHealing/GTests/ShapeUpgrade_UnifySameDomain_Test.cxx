@@ -17,12 +17,21 @@
 #include <BRep_Tool.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepBuilderAPI_MakeSolid.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepBuilderAPI_Sewing.hxx>
+#include <BRepBuilderAPI_TransitionMode.hxx>
+#include <BRepCheck_Analyzer.hxx>
+#include <BRepLib.hxx>
+#include <BRepMesh_IncrementalMesh.hxx>
+#include <BRepOffsetAPI_MakePipeShell.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <Geom_Plane.hxx>
+#include <GC_MakeArcOfCircle.hxx>
 #include <gp_Pln.hxx>
 #include <gp_Pnt.hxx>
+#include <IMeshData_Status.hxx>
+#include <Poly_Triangulation.hxx>
 #include <ShapeUpgrade_UnifySameDomain.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
@@ -30,7 +39,10 @@
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Face.hxx>
 #include <TopoDS_Shell.hxx>
+#include <TopoDS_Solid.hxx>
 #include <TopoDS_Wire.hxx>
+
+#include <initializer_list>
 
 //=================================================================================================
 // ShapeUpgrade_UnifySameDomain Tests
@@ -305,4 +317,97 @@ TEST(ShapeUpgrade_UnifySameDomainTest, BasicBoxUnification)
     aFaceCount++;
   }
   EXPECT_EQ(aFaceCount, 6) << "Box should have 6 faces";
+}
+
+namespace
+{
+TopoDS_Edge makeArc(const gp_Pnt& theStart, const gp_Pnt& theMiddle, const gp_Pnt& theEnd)
+{
+  return BRepBuilderAPI_MakeEdge(GC_MakeArcOfCircle(theStart, theMiddle, theEnd).Value());
+}
+
+TopoDS_Wire makeWire(std::initializer_list<TopoDS_Edge> theEdges)
+{
+  BRepBuilderAPI_MakeWire aMaker;
+  for (const TopoDS_Edge& anEdge : theEdges)
+  {
+    aMaker.Add(anEdge);
+  }
+  return aMaker.Wire();
+}
+
+TopoDS_Shape makeSolidFromClosedPipeShell(const TopoDS_Shape& theShellShape)
+{
+  BRepBuilderAPI_Sewing aSewing;
+  aSewing.Add(theShellShape);
+  aSewing.Perform();
+
+  BRepBuilderAPI_MakeSolid aSolidMaker;
+  for (TopExp_Explorer anExp(aSewing.SewedShape(), TopAbs_SHELL); anExp.More(); anExp.Next())
+  {
+    aSolidMaker.Add(TopoDS::Shell(anExp.Current()));
+  }
+
+  TopoDS_Solid aSolid = aSolidMaker.Solid();
+  BRepLib::OrientClosedSolid(aSolid);
+  return aSolid;
+}
+
+int countTriangulatedFaces(const TopoDS_Shape& theShape, int& theMeshStatus)
+{
+  BRepMesh_IncrementalMesh aMesh(theShape, 0.01);
+  theMeshStatus = aMesh.GetStatusFlags();
+
+  int aCount = 0;
+  for (TopExp_Explorer anExp(theShape, TopAbs_FACE); anExp.More(); anExp.Next())
+  {
+    TopLoc_Location                        aLoc;
+    const occ::handle<Poly_Triangulation>& aTriangulation =
+      BRep_Tool::Triangulation(TopoDS::Face(anExp.Current()), aLoc);
+    if (!aTriangulation.IsNull() && aTriangulation->NbTriangles() > 0)
+    {
+      ++aCount;
+    }
+  }
+
+  return aCount;
+}
+} // namespace
+
+TEST(ShapeUpgrade_UnifySameDomainTest, ClosedPeriodicPipeRemainsMeshableAfterFaceUnification)
+{
+  TopoDS_Wire aSpine = makeWire({makeArc(gp_Pnt(0, -3, 0), gp_Pnt(3, 0, 0), gp_Pnt(6, -3, 0)),
+                                 makeArc(gp_Pnt(6, -3, 0), gp_Pnt(3, -6, 0), gp_Pnt(0, -3, 0))});
+
+  const double aRadius = 0.5;
+  TopoDS_Wire  aProfile =
+    makeWire({makeArc(gp_Pnt(0, -3, -aRadius), gp_Pnt(aRadius, -3, 0), gp_Pnt(0, -3, aRadius)),
+              makeArc(gp_Pnt(0, -3, aRadius), gp_Pnt(-aRadius, -3, 0), gp_Pnt(0, -3, -aRadius))});
+
+  BRepOffsetAPI_MakePipeShell aPipe(aSpine);
+  aPipe.SetMode(true);
+  aPipe.Add(aProfile, false, false);
+  aPipe.SetTransitionMode(BRepBuilderAPI_RightCorner);
+  aPipe.Build();
+  ASSERT_TRUE(aPipe.IsDone());
+
+  const TopoDS_Shape aRawShape = makeSolidFromClosedPipeShell(aPipe.Shape());
+  ASSERT_TRUE(BRepCheck_Analyzer(aRawShape).IsValid());
+
+  int       aRawMeshStatus        = 0;
+  const int aRawTriangulatedFaces = countTriangulatedFaces(aRawShape, aRawMeshStatus);
+  ASSERT_EQ(aRawMeshStatus & IMeshData_Failure, 0);
+  ASSERT_GT(aRawTriangulatedFaces, 0);
+
+  ShapeUpgrade_UnifySameDomain aUnifier(aRawShape, true, true, false);
+  aUnifier.SetSafeInputMode(false);
+  aUnifier.Build();
+  const TopoDS_Shape& aUnifiedShape = aUnifier.Shape();
+  ASSERT_FALSE(aUnifiedShape.IsNull());
+  ASSERT_TRUE(BRepCheck_Analyzer(aUnifiedShape).IsValid());
+
+  int       aUnifiedMeshStatus        = 0;
+  const int aUnifiedTriangulatedFaces = countTriangulatedFaces(aUnifiedShape, aUnifiedMeshStatus);
+  EXPECT_EQ(aUnifiedMeshStatus & IMeshData_Failure, 0);
+  EXPECT_GT(aUnifiedTriangulatedFaces, 0);
 }
